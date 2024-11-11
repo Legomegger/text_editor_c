@@ -4,9 +4,12 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <termios.h>
+#include <string.h>
 #include <sys/ioctl.h>
 
 #define CTRL_KEY(k)((k) & 0x1f)
+#define KILO_VERSION "0.0.1"
+#define ABUF_INIT {NULL, 0}
 
 struct editorConfig {
   int screenrows;
@@ -14,7 +17,25 @@ struct editorConfig {
   struct termios orig_termios;
 };
 
+struct abuf {
+  char *b;
+  int len;
+};
+
 struct editorConfig E;
+
+void abAppend(struct abuf *ab, const char *s, int len) {
+  char *new = realloc(ab->b, ab->len + len);
+
+  if (new == NULL) return;
+  memcpy(&new[ab->len], s, len);
+  ab->b = new;
+  ab->len += len;
+}
+
+void abFree(struct abuf *ab) {
+  free(ab->b);
+}
 
 void drawCursorTop() {
   write(STDOUT_FILENO, "\x1b[H", 3);
@@ -104,22 +125,40 @@ int getWindowSize(int *rows, int *cols) {
   }
 }
 
-void editorDrawRows() {
+void editorDrawRows(struct abuf *ab) {
   int y;
   for (y=0; y<E.screenrows; y++) {
-    write(STDOUT_FILENO, "~", 1);
+    if (y == E.screenrows / 3 ) {
+      char welcome[80];
+      int welcomelen = snprintf(welcome, sizeof(welcome), 
+                                "Kilo editor -- version %s", KILO_VERSION);
+
+      if (welcomelen > E.screencols) welcomelen = E.screencols;
+      abAppend(ab, welcome, welcomelen);
+    } else {
+
+      abAppend(ab, "~", 1);
+    }
+    abAppend(ab, "\x1b[K", 3);
     if (y < E.screenrows - 1) {
-      write(STDOUT_FILENO, "\r\n", 2);
+      abAppend(ab, "\r\n", 2);
     }
   }
 }
 
 void editorRefreshScreen() {
-  write(STDOUT_FILENO, "\x1b[2J", 4);
-  drawCursorTop();
+  struct abuf ab = ABUF_INIT;
 
-  editorDrawRows();
-  drawCursorTop();
+  abAppend(&ab, "\x1b[?25l", 6);
+  abAppend(&ab, "\x1b[H", 3);
+
+  editorDrawRows(&ab);
+
+  abAppend(&ab, "\x1b[H", 3);
+  abAppend(&ab, "\x1b[?25h", 6);
+
+  write(STDOUT_FILENO, ab.b, ab.len);
+  abFree(&ab);
 }
 
 void initEditor() {
